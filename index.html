@@ -1323,6 +1323,11 @@
                 const stride = Math.floor((3 * width + 3) / 4) * 4;
                 const fileSize = 54 + stride * height;
                 const file = new ArrayBuffer(fileSize);
+
+                if (fileSize <= 54) { // Minimum size for header
+                    console.error("BMP: Calculated file size is too small or invalid.");
+                    return null;
+                }
                 const view = new DataView(file);
 
                 view.setUint16(0, 0x4D42, true); 
@@ -1334,54 +1339,117 @@
                 view.setUint16(26, 1, true);
                 view.setUint16(28, 24, true); 
                 view.setUint32(34, stride * height, true);
+                view.setInt32(38, 2835, true); // X pixels per meter (72 DPI * 39.3701 inches/meter)
+                view.setInt32(42, 2835, true); // Y pixels per meter
+                view.setUint32(46, 0, true); // Colors in color table
+                view.setUint32(50, 0, true); // Important color count
 
                 let pos = 54;
                 for (let y = height - 1; y >= 0; y--) {
                     for (let x = 0; x < width; x++) {
                         const i = (y * width + x) * 4;
-                        view.setUint8(pos++, data[i + 2]); 
-                        view.setUint8(pos++, data[i + 1]); 
-                        view.setUint8(pos++, data[i]);     
+                        view.setUint8(pos++, data[i + 2]); // Blue
+                        view.setUint8(pos++, data[i + 1]); // Green
+                        view.setUint8(pos++, data[i]);     // Red
                     }
                     pos += (stride - width * 3);
                 }
-                return new Blob([file], { type: 'image/bmp' });
+                const blob = new Blob([file], { type: 'image/bmp' });
+                console.log(`Generated BMP Blob size: ${blob.size} bytes`);
+                return blob;
             }
 
+            // Implementación de codificador TIFF (24-bit RGB, sin compresión)
             function generateTIFF(canvas, settings) {
                 const ctx = canvas.getContext('2d');
                 const { width, height, data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                const imageSize = width * height * 3;
-                const headerSize = 8;
-                const ifdOffset = headerSize + imageSize;
-                const ifdEntries = 11;
-                const ifdSize = 2 + (ifdEntries * 12) + 4;
-                const file = new ArrayBuffer(ifdOffset + ifdSize);
-                const v = new DataView(file);
 
-                v.setUint16(0, 0x4949, true); v.setUint16(2, 42, true); v.setUint32(4, ifdOffset, true);
-                for (let i = 0; i < width * height; i++) {
-                    const p = i * 4, d = headerSize + i * 3;
-                    v.setUint8(d, data[p]); v.setUint8(d + 1, data[p + 1]); v.setUint8(d + 2, data[p + 2]);
+                // TIFF Header (8 bytes)
+                const headerSize = 8;
+                // Image Data (RGB, 3 bytes per pixel)
+                const imageDataSize = width * height * 3;
+
+                // IFD entries (12 entries for a basic RGB uncompressed TIFF)
+                const ifdEntriesCount = 12; // Added ResolutionUnit
+                const ifdEntrySize = 12; // Each IFD entry is 12 bytes
+                const ifdSize = 2 + (ifdEntriesCount * ifdEntrySize) + 4; // 2 bytes for count, 4 for next IFD offset
+
+                // Extra data for tags that don't fit in 4 bytes (e.g., BitsPerSample, XResolution, YResolution)
+                const bitsPerSampleData = new Uint16Array([8, 8, 8]); // 3 SHORTs = 6 bytes
+                const xResolutionData = new Uint32Array([72, 1]); // 2 LONGs = 8 bytes (numerator, denominator)
+                const yResolutionData = new Uint32Array([72, 1]); // 2 LONGs = 8 bytes
+
+                const extraDataBuffer = new ArrayBuffer(bitsPerSampleData.byteLength + xResolutionData.byteLength + yResolutionData.byteLength);
+                const extraDataU8 = new Uint8Array(extraDataBuffer);
+                extraDataU8.set(new Uint8Array(bitsPerSampleData.buffer), 0);
+                extraDataU8.set(new Uint8Array(xResolutionData.buffer), bitsPerSampleData.byteLength);
+                extraDataU8.set(new Uint8Array(yResolutionData.buffer), bitsPerSampleData.byteLength + xResolutionData.byteLength);
+
+                const extraDataSize = extraDataBuffer.byteLength;
+
+                // Calculate offsets
+                const ifdOffset = headerSize + imageDataSize;
+                const extraDataOffset = ifdOffset + ifdSize; // All extra data stored contiguously after IFD
+
+                const totalFileSize = extraDataOffset + extraDataSize;
+
+                if (totalFileSize <= ifdOffset + ifdSize) { // Minimum size for header + image data + IFD
+                    console.error("TIFF: Calculated file size is too small or invalid.");
+                    return null;
                 }
+
+                const file = new ArrayBuffer(totalFileSize);
+                const v = new DataView(file);
+                const u8 = new Uint8Array(file); // For copying typed arrays
+
+                // 1. TIFF Header
+                v.setUint16(0, 0x4949, true); // "II" for Little Endian
+                v.setUint16(2, 42, true);     // Magic number
+                v.setUint32(4, ifdOffset, true); // Offset to first IFD
+
+                // 2. Image Data (RGB, 8-bit per channel, uncompressed)
+                let imgDataPos = headerSize;
+                for (let i = 0; i < width * height; i++) {
+                    const p = i * 4; // Index in ImageData (RGBA)
+                    v.setUint8(imgDataPos++, data[p]);     // Red
+                    v.setUint8(imgDataPos++, data[p + 1]); // Green
+                    v.setUint8(imgDataPos++, data[p + 2]); // Blue
+                }
+
+                // 3. IFD (Image File Directory)
                 let o = ifdOffset;
-                v.setUint16(o, ifdEntries, true); o += 2;
-                const put = (t, typ, n, val) => {
-                    v.setUint16(o, t, true); v.setUint16(o + 2, typ, true);
-                    v.setUint32(o + 4, n, true); v.setUint32(o + 8, val, true); o += 12;
+                v.setUint16(o, ifdEntriesCount, true); o += 2; // Number of entries
+
+                const put = (tag, type, count, valueOrOffset) => {
+                    v.setUint16(o, tag, true);     // Tag
+                    v.setUint16(o + 2, type, true); // Type
+                    v.setUint32(o + 4, count, true); // Count
+                    v.setUint32(o + 8, valueOrOffset, true); // Value or Offset
+                    o += ifdEntrySize;
                 };
-                put(256, 3, 1, width); put(257, 3, 1, height);
-                put(258, 3, 3, 0x00000008); // Explicación simplificada: 8 bits por componente
-                put(259, 3, 1, 1); // No compression
-                put(262, 3, 1, 2); // RGB
-                put(273, 4, 1, headerSize); // StripOffsets
-                put(277, 3, 1, 3); // SamplesPerPixel
-                put(278, 3, 1, height); // RowsPerStrip
-                put(279, 4, 1, imageSize); // StripByteCounts
-                put(282, 5, 1, 0); // XResolution (dummy)
-                put(283, 5, 1, 0); // YResolution (dummy)
-                v.setUint32(o, 0, true);
-                return new Blob([file], { type: 'image/tiff' });
+
+                // IFD Entries
+                put(256, 3, 1, width); // ImageWidth (SHORT)
+                put(257, 3, 1, height); // ImageLength (SHORT)
+                put(258, 3, 3, extraDataOffset); // BitsPerSample (SHORT, 3 values: 8,8,8) -> Offset to actual values
+                put(259, 3, 1, 1); // Compression (SHORT, 1 = No compression)
+                put(262, 3, 1, 2); // PhotometricInterpretation (SHORT, 2 = RGB)
+                put(273, 4, 1, headerSize); // StripOffsets (LONG, offset to image data)
+                put(277, 3, 1, 3); // SamplesPerPixel (SHORT, 3 for RGB)
+                put(278, 3, 1, height); // RowsPerStrip (SHORT, height for uncompressed single strip)
+                put(279, 4, 1, imageDataSize); // StripByteCounts (LONG, size of image data)
+                put(282, 5, 1, extraDataOffset + bitsPerSampleData.byteLength); // XResolution (RATIONAL, offset to [72, 1])
+                put(283, 5, 1, extraDataOffset + bitsPerSampleData.byteLength + xResolutionData.byteLength); // YResolution (RATIONAL, offset to [72, 1])
+                put(296, 3, 1, 2); // ResolutionUnit (SHORT, 2 = inches)
+
+                v.setUint32(o, 0, true); // Next IFD offset (0 for last IFD)
+
+                // 4. Extra Data
+                u8.set(new Uint8Array(extraDataBuffer), extraDataOffset);
+
+                const blob = new Blob([file], { type: 'image/tiff' });
+                console.log(`Generated TIFF Blob size: ${blob.size} bytes`);
+                return blob;
             }
 
             async function convertToSVGVector(canvas, settings) {
