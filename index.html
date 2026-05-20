@@ -1316,8 +1316,73 @@
                 return new Blob([buf], { type: 'image/x-icon' });
             }
 
-            function generateBMP(canvas, settings) { /* ... mismo código anterior ... */ }
-            function generateTIFF(canvas, settings) { /* ... mismo código anterior ... */ }
+            function generateBMP(canvas, settings) {
+                const ctx = canvas.getContext('2d');
+                const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const { width, height, data } = imgData;
+                const stride = Math.floor((3 * width + 3) / 4) * 4;
+                const fileSize = 54 + stride * height;
+                const file = new ArrayBuffer(fileSize);
+                const view = new DataView(file);
+
+                view.setUint16(0, 0x4D42, true); 
+                view.setUint32(2, fileSize, true);
+                view.setUint32(10, 54, true); 
+                view.setUint32(14, 40, true);
+                view.setInt32(18, width, true);
+                view.setInt32(22, height, true);
+                view.setUint16(26, 1, true);
+                view.setUint16(28, 24, true); 
+                view.setUint32(34, stride * height, true);
+
+                let pos = 54;
+                for (let y = height - 1; y >= 0; y--) {
+                    for (let x = 0; x < width; x++) {
+                        const i = (y * width + x) * 4;
+                        view.setUint8(pos++, data[i + 2]); 
+                        view.setUint8(pos++, data[i + 1]); 
+                        view.setUint8(pos++, data[i]);     
+                    }
+                    pos += (stride - width * 3);
+                }
+                return new Blob([file], { type: 'image/bmp' });
+            }
+
+            function generateTIFF(canvas, settings) {
+                const ctx = canvas.getContext('2d');
+                const { width, height, data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const imageSize = width * height * 3;
+                const headerSize = 8;
+                const ifdOffset = headerSize + imageSize;
+                const ifdEntries = 11;
+                const ifdSize = 2 + (ifdEntries * 12) + 4;
+                const file = new ArrayBuffer(ifdOffset + ifdSize);
+                const v = new DataView(file);
+
+                v.setUint16(0, 0x4949, true); v.setUint16(2, 42, true); v.setUint32(4, ifdOffset, true);
+                for (let i = 0; i < width * height; i++) {
+                    const p = i * 4, d = headerSize + i * 3;
+                    v.setUint8(d, data[p]); v.setUint8(d + 1, data[p + 1]); v.setUint8(d + 2, data[p + 2]);
+                }
+                let o = ifdOffset;
+                v.setUint16(o, ifdEntries, true); o += 2;
+                const put = (t, typ, n, val) => {
+                    v.setUint16(o, t, true); v.setUint16(o + 2, typ, true);
+                    v.setUint32(o + 4, n, true); v.setUint32(o + 8, val, true); o += 12;
+                };
+                put(256, 3, 1, width); put(257, 3, 1, height);
+                put(258, 3, 3, 0x00000008); // Explicación simplificada: 8 bits por componente
+                put(259, 3, 1, 1); // No compression
+                put(262, 3, 1, 2); // RGB
+                put(273, 4, 1, headerSize); // StripOffsets
+                put(277, 3, 1, 3); // SamplesPerPixel
+                put(278, 3, 1, height); // RowsPerStrip
+                put(279, 4, 1, imageSize); // StripByteCounts
+                put(282, 5, 1, 0); // XResolution (dummy)
+                put(283, 5, 1, 0); // YResolution (dummy)
+                v.setUint32(o, 0, true);
+                return new Blob([file], { type: 'image/tiff' });
+            }
 
             async function convertToSVGVector(canvas, settings) {
                 if (typeof ImageTracer === 'undefined') {
