@@ -1,0 +1,17 @@
+{
+  "name": "PixelForge — Convertidor de Imágenes",
+  "short_name": "PixelForge",
+  "description": "Convertidor de imágenes multiformato local y privado.",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#0b0b0f",
+  "theme_color": "#6366f1",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/1043/1043431.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
