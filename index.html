@@ -1291,7 +1291,9 @@
                     const ctx = c.getContext('2d');
                     if (!settings.icoTransparent) { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, size, size); }
                     ctx.drawImage(canvas, 0, 0, size, size);
-                    pngs.push({ size, blob: await canvasToBlob(c, 'image/png') });
+                    const blob = await canvasToBlob(c, 'image/png');
+                    const bytes = new Uint8Array(await blob.arrayBuffer());
+                    pngs.push({ size, bytes });
                 }
                 return createICOFromPNGs(pngs);
             }
@@ -1301,9 +1303,9 @@
                 let offset = headerSize + dirSize;
                 const chunks = [], entries = [];
                 for (const p of pngs) {
-                    const bytes = new Uint8Array(p.blob);
+                    const bytes = p.bytes;
                     const entry = new ArrayBuffer(16), dv = new DataView(entry);
-                    dv.setUint8(0, Math.min(p.size, 256)); dv.setUint8(1, Math.min(p.size, 256));
+                    dv.setUint8(0, p.size >= 256 ? 0 : p.size); dv.setUint8(1, p.size >= 256 ? 0 : p.size);
                     dv.setUint8(2, 0); dv.setUint8(3, 0); dv.setUint16(4, 1, true); dv.setUint16(6, 32, true);
                     dv.setUint32(8, bytes.length, true); dv.setUint32(12, offset, true);
                     entries.push(new Uint8Array(entry)); chunks.push(bytes); offset += bytes.length;
